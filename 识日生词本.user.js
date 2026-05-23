@@ -22,7 +22,8 @@
         apiType: "mymemory",
         deepseekKey: "",
         customApiUrl: "",
-        syncUrl: "http://192.168.2.191:8080/upload"
+        syncUrl: "http://192.168.2.191:8080/upload",
+        clearAfterSync: false
     };
     var STORAGE_KEY = "shiri_words";
     var CONFIG_KEY = "shiri_config";
@@ -227,6 +228,7 @@ iconBtn.style.top = iconY + "px";
     var inputSyncUrl = viewSet.querySelector("#sh-input-sync-url");
     var radioGroup = viewSet.querySelector("#sh-radio-api");
     var grpDk = viewSet.querySelector(".sh-deepseek-group");
+    var inputClearSync = viewSet.querySelector("#sh-input-clear-sync");
     var grpCus = viewSet.querySelector(".sh-custom-group");
 
     // ==================== 数据操作 ====================
@@ -416,6 +418,7 @@ iconBtn.style.top = iconY + "px";
         inputDkKey.value = config.deepseekKey;
         inputCusUrl.value = config.customApiUrl;
         inputSyncUrl.value = config.syncUrl;
+        inputClearSync.checked = config.clearAfterSync;
         updateSettingsVisibility();
     }
 
@@ -434,6 +437,7 @@ iconBtn.style.top = iconY + "px";
         config.deepseekKey = inputDkKey.value.trim();
         config.customApiUrl = inputCusUrl.value.trim();
         config.syncUrl = inputSyncUrl.value.trim() || DEFAULT_CONFIG.syncUrl;
+        config.clearAfterSync = inputClearSync.checked;
         saveConfig(config);
         showListView();
     });
@@ -530,7 +534,12 @@ iconBtn.style.top = iconY + "px";
             onload: function(r) {
                 btnSync.disabled = false;
                 btnSync.textContent = "一键同步到识日";
-                alert(r.status === 200 ? "同步成功！" : "同步失败，请检查手机是否已开启识日WiFi导入");
+                if (r.status === 200) {
+                    if (config.clearAfterSync) { GM_setValue(STORAGE_KEY, "[]"); if (overlay.classList.contains("show")) renderPanel(); }
+                    alert("同步成功！");
+                } else {
+                    alert("同步失败，请检查手机是否已开启识日WiFi导入");
+                }
             },
             onerror: function() {
                 btnSync.disabled = false;
