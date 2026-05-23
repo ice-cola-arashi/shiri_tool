@@ -196,6 +196,11 @@ iconBtn.style.top = iconY + "px";
                     <span class="sh-setting-desc">识日App WiFi导入的upload接口地址</span>\
                     <input class="sh-setting-input" id="sh-input-sync-url" type="text" placeholder="http://192.168.2.191:8080/upload">\
                 </div>\
+                <div class="sh-setting-group">\
+                    <label class="sh-radio-row" style="padding:0">\
+                        <input type="checkbox" id="sh-input-clear-sync"> 同步成功后清空本地单词\
+                    </label>\
+                </div>\
                 <div class="sh-actions" style="border-top:none;padding:0">\
                     <button class="sh-btn sh-btn-save" id="sh-btn-save-config">保存设置</button>\
                     <button class="sh-btn" style="background:#6b7280;flex:.6" id="sh-btn-cancel-config">返回</button>\
