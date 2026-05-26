@@ -1,7 +1,7 @@
 ﻿// ==UserScript==
 // @name         识日生词本
 // @namespace    shiri-wordbook
-// @version      1.2.0
+// @version      1.3.0
 // @description  日语划词翻译+收藏，支持DeepSeek AI翻译，一键同步到识日App
 // @author       Shiri
 // @match        *://*/*
@@ -56,8 +56,11 @@ transition:background .15s;line-height:1;font-family:'Microsoft YaHei','PingFang
 border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.15);padding:10px 14px;min-width:140px;\
 max-width:320px;font-size:14px;color:#1f2937;line-height:1.5;display:none;\
 font-family:'Microsoft YaHei','PingFang SC',sans-serif;box-sizing:border-box}\
-#shiri-popup .sp-word{font-size:16px;font-weight:600;color:#111827;margin:0 0 6px 0;\
+#shiri-popup .sp-word{font-size:16px;font-weight:600;color:#111827;margin:0 0 4px 0;\
 padding-right:18px;word-break:break-all}\
+#shiri-popup .sp-furigana{font-size:13px;color:#6b7280;margin:0 0 6px 0;\
+word-break:break-all;line-height:1.3}\
+#shiri-popup .sp-furigana.loading{color:#d1d5db;font-style:italic}\
 #shiri-popup .sp-close{position:absolute;top:4px;right:6px;width:22px;height:22px;\
 border:none;background:none;cursor:pointer;font-size:18px;color:#9ca3af;line-height:1;\
 padding:0;display:flex;align-items:center;justify-content:center}\
@@ -66,11 +69,11 @@ padding:0;display:flex;align-items:center;justify-content:center}\
 #shiri-popup .sp-trans{font-size:14px;color:#374151;margin:0 0 8px 0;word-break:break-all}\
 #shiri-popup .sp-trans.loading{color:#9ca3af;font-style:italic}\
 #shiri-popup .sp-trans.error{color:#ef4444}\
-#shiri-popup .sp-save{display:block;width:100%;padding:6px 0;background:#22c55e;color:#fff;\
+#shiri-popup .sp-actions-row{display:flex;gap:6px;align-items:center}#shiri-popup .sp-save{flex:1;padding:6px 0;background:#22c55e;color:#fff;\
 border:none;border-radius:5px;cursor:pointer;font-size:13px;font-weight:600;text-align:center;\
 transition:background .15s}\
 #shiri-popup .sp-save:hover{background:#16a34a}\
-#shiri-popup .sp-save.saved{background:#86efac;cursor:default}\
+#shiri-popup .sp-save.saved{background:#86efac;cursor:default}#shiri-popup .sp-speak{width:28px;height:28px;padding:0;background:#f3f4f6;border:none;border-radius:5px;cursor:pointer;font-size:15px;display:flex;align-items:center;justify-content:center;transition:background .15s;flex-shrink:0;line-height:1}#shiri-popup .sp-speak:hover{background:#e5e7eb}#shiri-popup .sp-speak.speaking{background:#dbeafe;color:#3b82f6}\
 #shiri-panel-overlay{position:fixed;inset:0;z-index:2147483647;background:rgba(0,0,0,.25);\
 display:none;align-items:center;justify-content:center;\
 font-family:'Microsoft YaHei','PingFang SC',sans-serif}\
@@ -128,14 +131,17 @@ font-size:13px;color:#1f2937;outline:none;box-sizing:border-box;transition:borde
     popup.innerHTML = '\
         <button class="sp-close" title="关闭">&times;</button>\
         <div class="sp-word"></div>\
+        <div class="sp-furigana"></div>\
         <div class="sp-divider"></div>\
         <div class="sp-trans loading">翻译中...</div>\
         <div class="sp-divider"></div>\
-        <button class="sp-save">收藏</button>';
+        <div class="sp-actions-row"><button class="sp-save">收藏</button><button class="sp-speak" title="发音">🔊</button></div>';
     document.body.appendChild(popup);
     var elPw = popup.querySelector(".sp-word");
+    var elPf = popup.querySelector(".sp-furigana");
     var elPt = popup.querySelector(".sp-trans");
     var elPs = popup.querySelector(".sp-save");
+    var elSpk = popup.querySelector(".sp-speak");
     var elPc = popup.querySelector(".sp-close");
     var currentWord = "";
     var abortCtrl = null;
@@ -344,6 +350,118 @@ iconBtn.style.top = iconY + "px";
         }
     }
 
+    // ==================== 注音查询: Jisho API ====================
+    function isAllKana(text) {
+        return /^[\u3040-\u309F\u30A0-\u30FF\s]+$/.test(text);
+    }
+    function isKatakanaWord(text) {
+        var k = 0;
+        for (var i = 0; i < text.length; i++) {
+            if (/[\u30A0-\u30FF]/.test(text[i])) k++;
+        }
+        return k > 0 && k / text.length > 0.4;
+    }
+    // 递归查词：先在结果中找精确匹配，找不到则取最长前缀拆分递归
+    function fetchFuriganaRecur(text, accumulated, depth, cb) {
+        if (!text) { cb(accumulated); return; }
+        if (depth > 5) { cb(accumulated || null); return; }
+
+        // 剥离前导假名
+        var kana = "";
+        for (var i = 0; i < text.length; i++) {
+            if (/[\u3040-\u309F\u30A0-\u30FF]/.test(text[i])) { kana += text[i]; }
+            else { break; }
+        }
+        if (kana) { fetchFuriganaRecur(text.slice(kana.length), accumulated + kana, depth, cb); return; }
+
+        var url = "https://jisho.org/api/v1/search/words?keyword=" + encodeURIComponent(text);
+        GM_xmlhttpRequest({
+            method: "GET", url: url, timeout: 6000,
+            onload: function(r) {
+                try {
+                    var d = JSON.parse(r.responseText);
+                    if (!d.data || !d.data.length) { cb(accumulated || null); return; }
+
+                    // 找精确匹配
+                    for (var i = 0; i < d.data.length; i++) {
+                        var item = d.data[i];
+                        if (item.japanese) {
+                            for (var j = 0; j < item.japanese.length; j++) {
+                                var jp = item.japanese[j];
+                                if (jp.word === text && jp.reading && jp.reading !== text) {
+                                    cb(accumulated + jp.reading); return;
+                                }
+                            }
+                        }
+                        if (item.slug === text && item.japanese && item.japanese[0] && item.japanese[0].reading) {
+                            cb(accumulated + item.japanese[0].reading); return;
+                        }
+                    }
+
+                    // 无精确匹配：找最长前缀词
+                    var best = null;
+                    for (var i = 0; i < d.data.length; i++) {
+                        var item = d.data[i];
+                        if (item.japanese && item.japanese[0]) {
+                            var w = item.japanese[0].word;
+                            var rd = item.japanese[0].reading;
+                            if (w && rd && text.indexOf(w) === 0 && w !== text) {
+                                if (!best || w.length > best.word.length) { best = { word: w, reading: rd }; }
+                            }
+                        }
+                    }
+
+                    if (best) {
+                        fetchFuriganaRecur(text.slice(best.word.length), accumulated + best.reading, depth + 1, cb);
+                    } else {
+                        cb(accumulated || null);
+                    }
+                } catch (_) { cb(accumulated || null); }
+            },
+            onerror: function() { cb(accumulated || null); },
+            ontimeout: function() { cb(accumulated || null); }
+        });
+    }
+
+    function fetchFurigana(text, cb) {
+        if (isAllKana(text)) { cb(null); return; }
+        fetchFuriganaRecur(text, "", 0, cb);
+    }
+
+    function fetchEnglishOrigin(text, cb) {
+        var url = "https://jisho.org/api/v1/search/words?keyword=" + encodeURIComponent(text);
+        GM_xmlhttpRequest({
+            method: "GET", url: url, timeout: 5000,
+            onload: function(r) {
+                try {
+                    var d = JSON.parse(r.responseText);
+                    if (!d.data || !d.data.length) { cb(null); return; }
+                    for (var i = 0; i < d.data.length; i++) {
+                        var item = d.data[i];
+                        if (item.japanese) {
+                            for (var j = 0; j < item.japanese.length; j++) {
+                                if (item.japanese[j].word === text) {
+                                    if (item.senses && item.senses[0] && item.senses[0].english_definitions) {
+                                        cb(item.senses[0].english_definitions[0]); return;
+                                    }
+                                }
+                            }
+                        }
+                        if (item.slug === text && item.senses && item.senses[0] && item.senses[0].english_definitions) {
+                            cb(item.senses[0].english_definitions[0]); return;
+                        }
+                    }
+                    if (d.data[0].senses && d.data[0].senses[0] && d.data[0].senses[0].english_definitions) {
+                        cb(d.data[0].senses[0].english_definitions[0]); return;
+                    }
+                    cb(null);
+                } catch (_) { cb(null); }
+            },
+            onerror: function() { cb(null); },
+            ontimeout: function() { cb(null); }
+        });
+    }
+
     // ==================== 弹窗控制 ====================
     function showPopup(text, x, y) {
         currentWord = text.trim();
@@ -364,6 +482,25 @@ iconBtn.style.top = iconY + "px";
         // 先显示才能测量尺寸
         popup.style.display = "block";
         popup.style.visibility = "hidden";
+
+        // 注音 / 英文原词
+        elPf.textContent = "";
+        elPf.className = "sp-furigana";
+        if (isKatakanaWord(currentWord)) {
+            fetchEnglishOrigin(currentWord, function(origin) {
+                if (origin) {
+                    elPf.textContent = "英: " + origin;
+                    elPf.className = "sp-furigana";
+                }
+            });
+        } else {
+            fetchFurigana(currentWord, function(reading) {
+                if (reading) {
+                    elPf.textContent = reading;
+                    elPf.className = "sp-furigana";
+                }
+            });
+        }
         var pw = popup.offsetWidth;
         var ph = popup.offsetHeight;
         popup.style.visibility = "visible";
@@ -587,6 +724,18 @@ iconBtn.style.top = iconY + "px";
         }
         elPs.className = "sp-save saved";
         elPs.disabled = true;
+    });
+
+    elSpk.addEventListener("click", function() {
+        if (!currentWord) return;
+        speechSynthesis.cancel();
+        var u = new SpeechSynthesisUtterance(currentWord);
+        u.lang = "ja-JP";
+        u.rate = 0.9;
+        var btn = elSpk;
+        btn.classList.add("speaking");
+        u.onend = u.onerror = function() { btn.classList.remove("speaking"); };
+        speechSynthesis.speak(u);
     });
 
     elPc.addEventListener("click", hidePopup);
